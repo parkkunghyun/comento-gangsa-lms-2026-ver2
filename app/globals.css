@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --potens-navy: #15237a;
+  --potens-orange: #f26300;
+  --potens-line: #d9d9d9;
+  --potens-body: #5c5c5c;
+  --potens-black: #111111;
+  --potens-white: #ffffff;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-white text-potens-body font-sans;
+    color: var(--potens-body);
+    background: var(--potens-white);
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--potens-orange) 22%, white);
+    color: var(--potens-black);
+  }
+}
+
+@layer components {
+  .potens-title {
+    @apply text-potens-black font-bold tracking-tight;
+  }
+
+  .potens-subtitle {
+    @apply text-potens-navy font-medium;
+  }
+
+  .potens-body {
+    @apply text-potens-body font-normal;
+  }
+
+  .potens-panel {
+    @apply bg-white border border-potens-line;
+  }
+
+  .potens-divider {
+    @apply border-potens-line;
+  }
+
+  .potens-btn-primary {
+    @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-white bg-potens-orange
+      transition-colors duration-soft hover:bg-[#d95800] focus:outline-none focus-visible:ring-2 focus-visible:ring-potens-orange/40;
+  }
+
+  .potens-btn-secondary {
+    @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-potens-navy bg-white border border-potens-line
+      transition-colors duration-soft hover:bg-[#f7f8fc] focus:outline-none focus-visible:ring-2 focus-visible:ring-potens-navy/20;
+  }
+
+  .potens-input {
+    @apply w-full border border-potens-line bg-white px-3 py-2 text-sm text-potens-black
+      placeholder:text-[#9a9a9a] transition-colors duration-soft
+      focus:outline-none focus:border-potens-navy;
+  }
+
+  .potens-accent-num {
+    @apply text-potens-orange font-bold tabular-nums;
+  }
+
+  .potens-brand {
+    @apply font-bold text-potens-black tracking-tight;
+  }
+
+  .potens-brand::after {
+    content: '.';
+    color: var(--potens-orange);
+  }
+}
