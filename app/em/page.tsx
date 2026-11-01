@@ -31,6 +31,15 @@ interface DashboardData {
   participationThreeSplit: { externalTop5: Array<{ name: string; count: number }>; internalTop3: Array<{ name: string; count: number }> };
   regionThisMonth: Array<{ name: string; count: number; fill: string }>;
   regionThreeMonths: Array<{ name: string; count: number; fill: string }>;
+  externalBookingMonth?: ExternalBooking;
+  externalBookingThree?: ExternalBooking;
+}
+
+interface ExternalBooking {
+  booked: Array<{ name: string; confirmed: number; tentative: number; total: number }>;
+  unbooked: string[];
+  totalConfirmed: number;
+  totalTentative: number;
 }
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -340,6 +349,7 @@ export default function EMDashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>('month');
+  const [bookingPeriod, setBookingPeriod] = useState<Period>('month');
   const [copied, setCopied] = useState(false);
   const [composeMode, setComposeMode] = useState<'sms' | 'email' | null>('sms');
   const [emailSending, setEmailSending] = useState(false);
@@ -591,6 +601,9 @@ export default function EMDashboardPage() {
   const participationSplit = period === 'month' ? data?.participationMonthSplit : data?.participationThreeSplit;
   const periodLabel = period === 'month' ? '이번 달' : '최근 3개월';
 
+  const booking = bookingPeriod === 'month' ? data?.externalBookingMonth : data?.externalBookingThree;
+  const bookingPeriodLabel = bookingPeriod === 'month' ? '이번 달' : '최근 3개월';
+
   const donutData = [
     { name: '외부 강사 참여', value: externalForPeriod, color: '#15237A' },
     { name: '미참여', value: totalForPeriod - externalForPeriod, color: '#D9D9D9' },
@@ -733,6 +746,62 @@ export default function EMDashboardPage() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+
+          <div className="potens-panel overflow-hidden">
+            <div className="px-5 py-4 border-b border-potens-line flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h2 className="potens-subtitle text-sm">외부 강사 섭외 현황</h2>
+                <p className="text-[11px] text-potens-body mt-0.5">
+                  {bookingPeriodLabel} 외부 강사별 배정 교육 · 확정 {booking?.totalConfirmed ?? 0}건 · 가섭외{' '}
+                  {booking?.totalTentative ?? 0}건
+                </p>
+              </div>
+              <div className="flex items-center border border-potens-line">
+                {(['month', '3months'] as const).map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => setBookingPeriod(p)}
+                    className={`px-3.5 py-1.5 text-xs font-medium transition-colors duration-soft ${
+                      bookingPeriod === p
+                        ? 'bg-potens-navy text-white'
+                        : 'bg-white text-potens-body hover:text-potens-navy'
+                    }`}
+                  >
+                    {p === 'month' ? '이번 달' : '3개월'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="p-5">
+              {!booking?.booked.length ? (
+                <p className="text-xs text-potens-body py-4">{bookingPeriodLabel} 배정된 외부 강사가 없습니다.</p>
+              ) : (
+                <div style={{ height: Math.max(160, booking.booked.length * 26 + 40) }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={booking.booked} layout="vertical" margin={{ top: 2, right: 16, left: 4, bottom: 2 }}>
+                      <CartesianGrid strokeDasharray="0" stroke="#D9D9D9" horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 9, fill: '#5C5C5C' }} axisLine={{ stroke: '#D9D9D9' }} />
+                      <YAxis type="category" dataKey="name" width={60} tick={{ fontSize: 10, fill: '#5C5C5C' }} axisLine={{ stroke: '#D9D9D9' }} />
+                      <Tooltip
+                        contentStyle={{ fontSize: '11px', border: '1px solid #D9D9D9', borderRadius: 0 }}
+                        formatter={(value: number, name: string) => [`${value}건`, name]}
+                      />
+                      <Legend wrapperStyle={{ fontSize: '10px' }} iconSize={8} />
+                      <Bar dataKey="confirmed" stackId="booking" fill="#15237A" name="확정" barSize={14} />
+                      <Bar dataKey="tentative" stackId="booking" fill="#F26300" name="가섭외" barSize={14} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+              {!!booking?.unbooked.length && (
+                <p className="mt-3 text-[11px] text-potens-body leading-relaxed">
+                  <span className="font-medium text-potens-navy">미배정 {booking.unbooked.length}명</span>
+                  <span className="mx-1.5 text-potens-line">|</span>
+                  {booking.unbooked.join(', ')}
+                </p>
+              )}
             </div>
           </div>
         </>

@@ -84,6 +84,44 @@ function splitParticipation(
   };
 }
 
+/** 외부 강사별 배정 교육 건수 (교육명에 "가섭외"가 있으면 가섭외, 아니면 확정) */
+function externalBookingStats(
+  eventList: { summary?: string; attendees?: Array<{ email?: string }> }[],
+  emailToName: Record<string, string>,
+  nameToIsExternal: Record<string, boolean>
+) {
+  const map: Record<string, { confirmed: number; tentative: number }> = {};
+  eventList.forEach((event) => {
+    const tentative = (event.summary || '').includes('가섭외');
+    const names = new Set<string>();
+    (event.attendees || []).forEach((a) => {
+      const email = normalizeEmail(a.email || '');
+      const name = email ? emailToName[email] : undefined;
+      if (name && nameToIsExternal[name]) names.add(name);
+    });
+    names.forEach((name) => {
+      if (!map[name]) map[name] = { confirmed: 0, tentative: 0 };
+      if (tentative) map[name].tentative++;
+      else map[name].confirmed++;
+    });
+  });
+
+  const booked = Object.entries(map)
+    .map(([name, c]) => ({ name, confirmed: c.confirmed, tentative: c.tentative, total: c.confirmed + c.tentative }))
+    .sort((a, b) => b.total - a.total || b.confirmed - a.confirmed || a.name.localeCompare(b.name));
+  // "박경현2" 같은 테스트 계정은 미배정 목록에서 제외
+  const unbooked = Object.keys(nameToIsExternal)
+    .filter((name) => nameToIsExternal[name] && !map[name] && !/\d$/.test(name.trim()))
+    .sort((a, b) => a.localeCompare(b));
+
+  return {
+    booked,
+    unbooked,
+    totalConfirmed: booked.reduce((sum, b) => sum + b.confirmed, 0),
+    totalTentative: booked.reduce((sum, b) => sum + b.tentative, 0),
+  };
+}
+
 /** 강사별 지역 참여 집계 (이벤트 목록 + emailToName → 이름별 서울/경기도/지방/기타) */
 function instructorRegionStats(
   eventList: { attendees?: Array<{ email?: string }>; location?: string; description?: string }[],
@@ -207,6 +245,9 @@ export async function GET() {
       })
     ).length;
 
+    const externalBookingMonth = externalBookingStats(thisMonthEvents, emailToName, nameToIsExternal);
+    const externalBookingThree = externalBookingStats(threeMonthsEvents, emailToName, nameToIsExternal);
+
     const instructorCount = Object.keys(nameToIsExternal).length;
     const instructorCountExternal = Object.values(nameToIsExternal).filter(Boolean).length;
 
@@ -233,6 +274,8 @@ export async function GET() {
       regionThreeMonths,
       instructorRegionThisMonth,
       instructorRegionThreeMonths,
+      externalBookingMonth,
+      externalBookingThree,
     });
   } catch (error) {
     console.error('[EM Dashboard API]', error);
