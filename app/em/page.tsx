@@ -14,6 +14,7 @@ import {
   Pie,
   Cell,
   Legend,
+  LabelList,
 } from 'recharts';
 
 type Period = 'month' | '3months';
@@ -778,19 +779,28 @@ export default function EMDashboardPage() {
               {!booking?.booked.length ? (
                 <p className="text-xs text-potens-body py-4">{bookingPeriodLabel} 배정된 외부 강사가 없습니다.</p>
               ) : (
-                <div style={{ height: Math.max(160, booking.booked.length * 26 + 40) }}>
+                <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={booking.booked} layout="vertical" margin={{ top: 2, right: 16, left: 4, bottom: 2 }}>
-                      <CartesianGrid strokeDasharray="0" stroke="#D9D9D9" horizontal={false} />
-                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 9, fill: '#5C5C5C' }} axisLine={{ stroke: '#D9D9D9' }} />
-                      <YAxis type="category" dataKey="name" width={60} tick={{ fontSize: 10, fill: '#5C5C5C' }} axisLine={{ stroke: '#D9D9D9' }} />
+                    <BarChart data={booking.booked} margin={{ top: 18, right: 8, left: -16, bottom: 2 }}>
+                      <CartesianGrid strokeDasharray="0" stroke="#D9D9D9" vertical={false} />
+                      <XAxis
+                        dataKey="name"
+                        interval={0}
+                        tick={{ fontSize: 10, fill: '#5C5C5C' }}
+                        axisLine={{ stroke: '#D9D9D9' }}
+                        tickLine={false}
+                      />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 9, fill: '#5C5C5C' }} axisLine={{ stroke: '#D9D9D9' }} />
                       <Tooltip
+                        cursor={{ fill: '#f7f8fc' }}
                         contentStyle={{ fontSize: '11px', border: '1px solid #D9D9D9', borderRadius: 0 }}
                         formatter={(value: number, name: string) => [`${value}건`, name]}
                       />
                       <Legend wrapperStyle={{ fontSize: '10px' }} iconSize={8} />
-                      <Bar dataKey="confirmed" stackId="booking" fill="#15237A" name="확정" barSize={14} />
-                      <Bar dataKey="tentative" stackId="booking" fill="#F26300" name="가섭외" barSize={14} />
+                      <Bar dataKey="confirmed" stackId="booking" fill="#15237A" name="확정" maxBarSize={32} />
+                      <Bar dataKey="tentative" stackId="booking" fill="#F26300" name="가섭외" maxBarSize={32}>
+                        <LabelList dataKey="total" position="top" style={{ fontSize: 10, fill: '#15237A', fontWeight: 600 }} />
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
