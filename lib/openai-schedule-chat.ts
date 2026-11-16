@@ -7,13 +7,23 @@ import { WEEKDAY_KO, weekdayOf } from '@/lib/schedule-sheet-data';
 
 const MAX_TOOL_ROUNDS = 5;
 const RETRY_DELAYS_MS = [1000, 3000];
+const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 
-/** 404 시 순서대로 시도 (환경변수 GEMINI_MODEL이 있으면 최우선) */
-const MODEL_CANDIDATES = [process.env.GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash'].filter(
+/** 404(모델 없음) 시 순서대로 시도 (환경변수 OPENAI_MODEL이 있으면 최우선) */
+const MODEL_CANDIDATES = [process.env.OPENAI_MODEL, 'gpt-4.1-mini', 'gpt-4o-mini'].filter(
   (m): m is string => !!m && m.trim().length > 0
 );
 
+const TOOLS = SCHEDULE_CHAT_TOOL_DECLARATIONS.map((fn) => ({ type: 'function' as const, function: fn }));
+
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
+
+type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
+
+type OpenAIMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string | null; tool_calls?: ToolCall[] }
+  | { role: 'tool'; tool_call_id: string; content: string };
 
 function buildSystemInstruction(summary: Awaited<ReturnType<typeof getScheduleDataSummary>>): string {
   const year = summary.today.slice(0, 4);
@@ -46,34 +56,6 @@ function buildSystemInstruction(summary: Awaited<ReturnType<typeof getScheduleDa
 - 질문이 애매하면(기간·강사·조건 불명확) 도구를 부르기 전에 한두 문장으로 짧게 되물어보세요.`;
 }
 
-type GeminiPart =
-  | { text: string }
-  | { functionCall: { name: string; args?: Record<string, unknown> } }
-  | { functionResponse: { name: string; response: Record<string, unknown> } };
-
-type GeminiContent = { role: string; parts: GeminiPart[] };
-
-function toGeminiContents(history: ChatMessage[]): GeminiContent[] {
-  const contents: GeminiContent[] = [];
-  for (const m of history) {
-    if (!m.content?.trim()) continue;
-    contents.push({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    });
-  }
-  return contents;
-}
-
-function extractText(parts: GeminiPart[] | undefined): string {
-  if (!parts?.length) return '';
-  return parts
-    .map((p) => ('text' in p && p.text ? p.text : ''))
-    .filter(Boolean)
-    .join('\n')
-    .trim();
-}
-
 /** 채팅 UI용: **, *, 불릿 마크다운 제거 */
 export function stripMarkdown(text: string): string {
   return text
@@ -86,82 +68,88 @@ export function stripMarkdown(text: string): string {
     .trim();
 }
 
-function uniqueModels(): string[] {
-  return Array.from(new Set(MODEL_CANDIDATES));
-}
-
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** 사용자에게 보여줄 오류 문구 */
-function friendlyGeminiError(status: number, errText: string): string {
-  if (status === 429) return 'AI 요청이 몰려 잠시 처리하지 못했습니다. 잠시 후 다시 시도해주세요.';
-  if (status === 400 && /API_KEY_INVALID|API key not valid/i.test(errText)) {
-    return 'Gemini API 키가 올바르지 않습니다. 서버 환경변수 GEMINI_API_KEY를 확인해주세요.';
+function friendlyOpenAIError(status: number, errText: string): string {
+  if (status === 401) {
+    return 'OpenAI API 키가 올바르지 않습니다. 서버 환경변수 OPENAI_API_KEY를 확인해주세요.';
   }
+  if (status === 429 && /insufficient_quota/i.test(errText)) {
+    return 'OpenAI API 사용 한도(크레딧)가 부족합니다. OpenAI 결제/한도 설정을 확인해주세요.';
+  }
+  if (status === 429) return 'AI 요청이 몰려 잠시 처리하지 못했습니다. 잠시 후 다시 시도해주세요.';
   if (status === 403) {
-    return 'Gemini API 키에 권한이 없습니다. 키의 사용 제한(IP/웹사이트)과 Generative Language API 활성화 여부를 확인해주세요.';
+    return 'OpenAI API 키에 이 모델을 사용할 권한이 없습니다. 프로젝트/조직 권한을 확인해주세요.';
   }
   if (status >= 500) return 'AI 서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해주세요.';
-  return `AI 응답 중 오류가 발생했습니다. (Gemini ${status})`;
+  return `AI 응답 중 오류가 발생했습니다. (OpenAI ${status})`;
 }
 
-async function callGemini(
+async function callOpenAI(
   apiKey: string,
-  model: string,
   body: Record<string, unknown>
 ): Promise<{ ok: true; data: any } | { ok: false; status: number; errText: string }> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, {
+    const res = await fetch(OPENAI_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify(body),
     });
     if (res.ok) return { ok: true, data: await res.json() };
 
     const errText = await res.text();
-    const retryable = res.status === 429 || res.status >= 500;
+    const retryable =
+      (res.status === 429 && !/insufficient_quota/i.test(errText)) || res.status >= 500;
     if (!retryable || attempt >= RETRY_DELAYS_MS.length) {
       return { ok: false, status: res.status, errText };
     }
-    console.warn(`[Gemini] ${model} ${res.status}, ${RETRY_DELAYS_MS[attempt]}ms 후 재시도`);
+    console.warn(`[OpenAI] ${body.model} ${res.status}, ${RETRY_DELAYS_MS[attempt]}ms 후 재시도`);
     await sleep(RETRY_DELAYS_MS[attempt]);
   }
 }
 
-async function callGeminiWithFallback(
+async function callOpenAIWithFallback(
   apiKey: string,
   body: Record<string, unknown>,
   preferredModel?: string
 ): Promise<{ data: any; model: string }> {
-  const models = preferredModel
-    ? [preferredModel, ...uniqueModels().filter((m) => m !== preferredModel)]
-    : uniqueModels();
+  const unique = Array.from(new Set(MODEL_CANDIDATES));
+  const models = preferredModel ? [preferredModel, ...unique.filter((m) => m !== preferredModel)] : unique;
   let last: { status: number; errText: string } | null = null;
 
   for (const model of models) {
-    const result = await callGemini(apiKey, model, body);
+    const result = await callOpenAI(apiKey, { ...body, model });
     if (result.ok) {
-      if (model !== models[0]) console.log(`[Gemini] fallback model in use: ${model}`);
+      if (model !== models[0]) console.log(`[OpenAI] fallback model in use: ${model}`);
       return { data: result.data, model };
     }
-    console.error(`Gemini API error (${model}):`, result.status, result.errText.slice(0, 500));
+    console.error(`OpenAI API error (${model}):`, result.status, result.errText.slice(0, 500));
     last = result;
-    const modelMissing = result.status === 404 || (result.status === 400 && /not found|not supported/i.test(result.errText));
+    const modelMissing = result.status === 404 || /model_not_found/i.test(result.errText);
     if (!modelMissing) break;
   }
 
-  throw new Error(last ? friendlyGeminiError(last.status, last.errText) : 'AI 응답 중 오류가 발생했습니다.');
+  throw new Error(last ? friendlyOpenAIError(last.status, last.errText) : 'AI 응답 중 오류가 발생했습니다.');
+}
+
+function parseArgs(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 export async function runScheduleChat(history: ChatMessage[]): Promise<{ answer: string }> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    throw new Error('GEMINI_API_KEY가 설정되지 않았습니다.');
+    throw new Error('OPENAI_API_KEY가 설정되지 않았습니다.');
   }
 
-  const contents = toGeminiContents(history);
-  if (!contents.length) {
+  const turns = history.filter((m) => m.content?.trim());
+  if (!turns.length) {
     throw new Error('메시지가 비어 있습니다.');
   }
 
@@ -172,65 +160,57 @@ export async function runScheduleChat(history: ChatMessage[]): Promise<{ answer:
     console.error('[일정 도우미] 시트 데이터 로드 실패:', error);
     throw new Error('일정 시트(캘린더_자동화)를 읽지 못했습니다. 잠시 후 다시 시도해주세요.');
   }
-  const systemInstruction = { parts: [{ text: buildSystemInstruction(summary) }] };
+
+  const messages: OpenAIMessage[] = [
+    { role: 'system', content: buildSystemInstruction(summary) },
+    ...turns.map((m) => ({ role: m.role, content: m.content }) as OpenAIMessage),
+  ];
 
   let activeModel: string | undefined;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const { data, model } = await callGeminiWithFallback(
+    const { data, model } = await callOpenAIWithFallback(
       apiKey,
-      {
-        system_instruction: systemInstruction,
-        tools: [{ function_declarations: SCHEDULE_CHAT_TOOL_DECLARATIONS }],
-        contents,
-        generationConfig: { temperature: 0.2 },
-      },
+      { messages, tools: TOOLS, temperature: 0.2 },
       activeModel
     );
     activeModel = model;
 
-    const parts: GeminiPart[] = data.candidates?.[0]?.content?.parts || [];
-    const functionCalls = parts.filter(
-      (p): p is { functionCall: { name: string; args?: Record<string, unknown> } } =>
-        'functionCall' in p && !!p.functionCall
-    );
+    const reply = data.choices?.[0]?.message;
+    const toolCalls: ToolCall[] = reply?.tool_calls || [];
 
-    if (functionCalls.length === 0) {
-      return { answer: stripMarkdown(extractText(parts)) || '답변을 생성하지 못했습니다. 질문을 조금 바꿔서 다시 물어봐주세요.' };
+    if (toolCalls.length === 0) {
+      return {
+        answer:
+          stripMarkdown(reply?.content || '') ||
+          '답변을 생성하지 못했습니다. 질문을 조금 바꿔서 다시 물어봐주세요.',
+      };
     }
 
-    contents.push({ role: 'model', parts });
+    messages.push({ role: 'assistant', content: reply.content ?? null, tool_calls: toolCalls });
 
-    const responseParts: GeminiPart[] = [];
-    for (const fc of functionCalls) {
-      const name = fc.functionCall.name;
+    for (const call of toolCalls) {
+      const name = call.function.name;
       let result: unknown;
       try {
-        result = await runScheduleChatTool(name, fc.functionCall.args || {});
+        result = await runScheduleChatTool(name, parseArgs(call.function.arguments));
       } catch (e: any) {
         console.error(`[일정 도우미] 도구 실행 실패 (${name}):`, e);
         result = { error: e?.message || '도구 실행 실패' };
       }
-      responseParts.push({ functionResponse: { name, response: { result } } });
+      messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
     }
-    contents.push({ role: 'user', parts: responseParts });
   }
 
-  const { data: finalData } = await callGeminiWithFallback(
+  const { data: finalData } = await callOpenAIWithFallback(
     apiKey,
-    {
-      system_instruction: systemInstruction,
-      tools: [{ function_declarations: SCHEDULE_CHAT_TOOL_DECLARATIONS }],
-      tool_config: { function_calling_config: { mode: 'NONE' } },
-      contents,
-      generationConfig: { temperature: 0.2 },
-    },
+    { messages, tools: TOOLS, tool_choice: 'none', temperature: 0.2 },
     activeModel
   );
 
   return {
     answer:
-      stripMarkdown(extractText(finalData.candidates?.[0]?.content?.parts)) ||
+      stripMarkdown(finalData.choices?.[0]?.message?.content || '') ||
       '조회 후 답변을 만들지 못했습니다. 질문을 조금 더 구체적으로 해주세요.',
   };
 }

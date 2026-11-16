@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { runScheduleChat, ChatMessage } from '@/lib/gemini-schedule-chat';
+import { runScheduleChat, ChatMessage } from '@/lib/openai-schedule-chat';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -15,11 +15,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!process.env.GEMINI_API_KEY) {
+    if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
         {
           error:
-            'GEMINI_API_KEY가 설정되지 않았습니다. 서버 환경변수에 Gemini API 키를 추가해주세요.',
+            'OPENAI_API_KEY가 설정되지 않았습니다. 서버 환경변수에 OpenAI API 키를 추가해주세요.',
         },
         { status: 503 }
       );
